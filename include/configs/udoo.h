@@ -27,7 +27,7 @@
 #define CONFIG_REVISION_TAG
 
 /* Size of malloc() pool */
-#define CONFIG_SYS_MALLOC_LEN		(2 * SZ_1M)
+#define CONFIG_SYS_MALLOC_LEN		(10 * SZ_1M)
 
 #define CONFIG_BOARD_EARLY_INIT_F
 #define CONFIG_MXC_GPIO
@@ -67,6 +67,30 @@
 #define CONFIG_ENV_OVERWRITE
 #define CONFIG_CONS_INDEX		1
 #define CONFIG_BAUDRATE			115200
+
+/* HDMI or LVDS Display Configuration */
+#define CONFIG_VIDEO_ENABLED
+#ifdef CONFIG_VIDEO_ENABLED
+#define CONFIG_VIDEO
+#define CONFIG_VIDEO_IPUV3
+#define CONFIG_CFB_CONSOLE
+#define CONFIG_VGA_AS_SINGLE_DEVICE
+#define CONFIG_SYS_CONSOLE_IS_IN_ENV
+#define CONFIG_SYS_CONSOLE_OVERWRITE_ROUTINE
+#define CONFIG_VIDEO_BMP_RLE8
+#define CONFIG_SPLASH_SCREEN
+#define CONFIG_SPLASH_SCREEN_ALIGN
+#define CONFIG_BMP_16BPP
+#define CONFIG_VIDEO_LOGO
+#define CONFIG_VIDEO_BMP_LOGO
+#define CONFIG_IPUV3_CLK 260000000
+#define CONFIG_CONSOLE_MUX
+#define CONFIG_CMD_HDMIDETECT
+#define CONFIG_CMD_PLOTMSG
+#define CONFIG_IMX_HDMI
+#define BOARD_INFO_STRING  "u-boot-imx-2014-04 on:"
+#endif
+
 
 /* Command definition */
 #include <config_cmd_default.h>
