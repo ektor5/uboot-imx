@@ -273,8 +273,7 @@ static int enable_pll_video(u32 pll_div, u32 pll_num, u32 pll_denom)
 		&imx_ccm->analog_pll_video_clr);
 
 	/* Set div, num and denom */
-	writel(BF_ANADIG_PLL_VIDEO_DIV_SELECT(pll_div) |
-		BF_ANADIG_PLL_VIDEO_TEST_DIV_SELECT(0x2),
+	writel(BF_ANADIG_PLL_VIDEO_DIV_SELECT(pll_div),
 		&imx_ccm->analog_pll_video_set);
 
 	writel(BF_ANADIG_PLL_VIDEO_NUM_A(pll_num),
@@ -303,7 +302,7 @@ static int enable_pll_video(u32 pll_div, u32 pll_num, u32 pll_denom)
 
 static int detect_lvds(struct display_info_t const *dev)
 {
-        return 0;
+        return 1;
 }
 
 static void do_enable_lvds(struct display_info_t const *dev)
@@ -323,11 +322,10 @@ static void do_enable_lvds(struct display_info_t const *dev)
 	reg |=  MXC_CCM_CCGR3_LDB_DI0_MASK;
 	writel(reg, &mxc_ccm->CCGR3);
 
-
-        /* set LDB0 clk select to 001 (pll2) */
+        /* set LDB0 clk select to 000 (pll5) */
 	reg = readl(&mxc_ccm->cs2cdr);
 	reg &= ~(MXC_CCM_CS2CDR_LDB_DI0_CLK_SEL_MASK);
-	reg |= (1 << MXC_CCM_CS2CDR_LDB_DI0_CLK_SEL_OFFSET);
+	reg |= (0 << MXC_CCM_CS2CDR_LDB_DI0_CLK_SEL_OFFSET);
 	writel(reg, &mxc_ccm->cs2cdr);
         /* this will set the clock @352MHz -> 50.2857MHz */
         /* too much for 7" and too few for 15" */
@@ -343,39 +341,107 @@ static void do_enable_lvds(struct display_info_t const *dev)
 	reg |= (CHSCCDR_CLK_SEL_LDB_DI0
 		<< MXC_CCM_CHSCCDR_IPU1_DI0_CLK_SEL_OFFSET);
 	writel(reg, &mxc_ccm->chsccdr);
+        
+        /* set registers for PLL5 clk */
+        u32 hck = MXC_HCLK/1000;           // Main oscillator
+	u32 min = hck * 27;                
+	u32 max = hck * 54;                
+	u32 temp, best = 0;
+	u32 i, j;
+	u32 pll_div, pll_num, pll_denom;
+        u32 post_div = 0;
+        
+        // set divisor 
+        u32 freq = 1000000000 / dev->mode.pixclock;
+//         u32 freq = 33267;
+        
+        u32 pll_post_freq = freq * 7;           // pll5_video_div_clk
+       
+        for (i = 0 ; i <= 4 ; i++ ) {
+                temp = pll_post_freq * ( 1 << i );
+                if ( temp > max || temp < min ) {
+                    continue;
+                }
+                if ( best == 0 || best < temp) {
+                    best = temp ;
+                    post_div = i ;
+                }
+        }
 
-//  not using this anymore
-//         
-//         /* set registers for PLL5 clk */
-//         u32 freq = 1000000000000 / dev->mode.pixclock;
-//         u32 freq = 266000000;
-// 	u32 hck = MXC_HCLK/1000;           // 24000000
-// 	u32 min = hck * 27;
-// 	u32 max = hck * 54;
-// 	u32 temp, best = 0;
-// 	u32 i, j, pred = 1, postd = 1;
-// 	u32 pll_div, pll_num, pll_denom;
-// 
-//         for (i = 1; i <= 8; i++) {
-// 		for (j = 1; j <= 8; j++) {
-// 			temp = freq * i * j;
-// 			if (temp > max || temp < min)
-// 				continue;
-// 
-// 			if (best == 0 || temp < best) {
-// 				best = temp;
-// 				pred = i;
-// 				postd = j;
-// 			}
-// 		}
-// 	}
-// 
-//         pll_div = best / hck;
-// 	pll_denom = 1000000;
-// 	pll_num = (best - hck * pll_div) * pll_denom / hck;
-// 
-//         enable_pll_video(pll_div, pll_num, pll_denom);
-//         
+        // setting the post divider registers 
+        
+        u32 post_div_select = 0;
+        u32 video_div = 0;
+        u32 select_div = 0;
+                
+        // analog_pll_video[post_div_select]
+        // 00 /4
+        // 01 /2
+        // 10 /1
+        // 11 rsv
+                
+        // ana_misc2[video_div]
+        // 00 /1
+        // 01 /2
+        // 10 /1
+        // 11 /4
+        
+        switch ( post_div ) {
+            case 0 :    // /1
+                post_div_select = 2 ;
+                break ;
+            case 1 :    // /2
+                post_div_select = 1 ;
+                break ;
+            // case 2   // /4
+            case 3 :    // /8
+                video_div = 1 ;
+                break;
+            case 4 :    // /16
+                video_div = 3 ;
+                break ;
+        }
+            
+        u32 pll_pre_freq = pll_post_freq * ( 1 << post_div );   // pll5_pre_div_clk, pll target freq
+        
+        // searching for the least divisor
+        for (j = 27; j <= 54; j++) {
+                temp = hck * j;
+                if (temp > pll_pre_freq)
+                    break;
+                
+                select_div = j;
+	}
+
+	// pll5_clk = hck * ( pll_div + pll_num / pll_denom )
+	
+        pll_div = select_div;
+	pll_denom = 1000000;
+	pll_num = ( pll_pre_freq - hck * pll_div) * ( pll_denom / hck )  ; 
+	
+        printf("hck %d\n", hck);
+        printf("pll_pre_freq %d\n", pll_pre_freq);
+        printf("post_div %d\n", post_div);
+        
+        printf("pll_post_div %d\n", post_div_select);
+	printf("video_div %d\n", video_div);
+        printf("pll_div %d\n", pll_div);
+
+	printf("pll_num %d\n", pll_num);
+	printf("pll_denom %d\n", pll_denom);
+        
+        enable_pll_video(pll_div, pll_num, pll_denom);
+        
+        reg = readl(&mxc_ccm->analog_pll_video);
+        reg |= BF_ANADIG_PLL_VIDEO_TEST_DIV_SELECT(post_div_select);
+        writel(reg, &mxc_ccm->analog_pll_video);
+        
+        reg = readl(&mxc_ccm->ana_misc2);
+        reg |= BF_ANADIG_ANA_MISC2_CONTROL3(video_div);
+        writel(reg, &mxc_ccm->ana_misc2);   
+
+	
+	
         return;
 }
 
@@ -390,13 +456,13 @@ static struct display_info_t const displays[] = {{
 		.refresh        = 60,
 		.xres           = 1920,
 		.yres           = 1080,
-		.pixclock       = 15385,
-		.left_margin    = 220,
+		.pixclock       = 7692,
+		.left_margin    = 100,
 		.right_margin   = 40,
-		.upper_margin   = 21,
-		.lower_margin   = 7,
-		.hsync_len      = 60,
-		.vsync_len      = 10,
+		.upper_margin   = 30,
+		.lower_margin   = 3,
+		.hsync_len      = 10,
+		.vsync_len      = 2,
 		.sync           = FB_SYNC_EXT,
 		.vmode          = FB_VMODE_NONINTERLACED
 } },{
@@ -409,10 +475,10 @@ static struct display_info_t const displays[] = {{
 		// Rif. 800x480 Panel UMSH-8596MD-20T @33.36MHz
 		// To activate write "setenv panel LDB-WVGA" or leave empty.
 		.name           = "LDB-WVGA",
-		.refresh        = 60,
+		.refresh        = 57,
 		.xres           = 800,
 		.yres           = 480,
-		.pixclock       = 19886,      //adjusting for 55MHz
+		.pixclock       = 30060,   
 		.left_margin    = 56,
 		.right_margin   = 50,
 		.upper_margin   = 23,
@@ -424,7 +490,7 @@ static struct display_info_t const displays[] = {{
 } },  {
         .bus    = -1,
         .addr   = -1,
-        .pixfmt = IPU_PIX_FMT_RGB666,
+        .pixfmt = IPU_PIX_FMT_RGB24,
         .detect = detect_lvds,
         .enable = do_enable_lvds,
         .mode   = {
@@ -432,9 +498,9 @@ static struct display_info_t const displays[] = {{
 		// To activate write "setenv panel LDB-WXGA".
 		.name           = "LDB-WXGA",
 		.refresh        = 59,
-		.xres           = 1366,
-		.yres           = 768,
-		.pixclock       = 19886,      //adjusting for 55MHz
+		.xres           = 800,
+		.yres           = 480,
+		.pixclock       = 13157,      
 		.left_margin    = 93,
 		.right_margin   = 33,
 		.upper_margin   = 22,
@@ -510,7 +576,7 @@ static void setup_display(void)
 		|IOMUXC_GPR2_BIT_MAPPING_CH1_SPWG
 		|IOMUXC_GPR2_DATA_WIDTH_CH1_18BIT
 		|IOMUXC_GPR2_BIT_MAPPING_CH0_SPWG
-		|IOMUXC_GPR2_DATA_WIDTH_CH0_18BIT
+		|IOMUXC_GPR2_DATA_WIDTH_CH0_24BIT
 		|IOMUXC_GPR2_LVDS_CH1_MODE_DISABLED
 		|IOMUXC_GPR2_LVDS_CH0_MODE_ENABLED_DI0;
 	writel(reg, &iomux->gpr[2]);
